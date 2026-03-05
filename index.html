@@ -406,7 +406,7 @@
         for (let i = 0; i < length; i++) {
           const t = i / sampleRate;
           const decay = Math.exp(-2.5 * t);
-          const density = t < 0.05 ? 1.5 : 1.0;
+          const density = t < 0.05 ? 1.0 : 0.8; // was 1.5/1.0 — reduced early burst
           data[i] = (Math.random() * 2 - 1) * decay * density;
         }
       }
@@ -423,7 +423,15 @@
       const convolver = actx.createConvolver();
       convolver.buffer = synthesiseIR(actx);
       const masterGain = actx.createGain();
-      masterGain.gain.value = 0.8;
+      masterGain.gain.value = 0.38; // was 0.8 — reduced to prevent feedback
+
+      // Hard limiter: stops runaway gain on devices without headphones
+      const limiter = actx.createDynamicsCompressor();
+      limiter.threshold.value = -6;  // dBFS
+      limiter.knee.value = 0;
+      limiter.ratio.value = 20;      // near-brickwall
+      limiter.attack.value = 0.001;
+      limiter.release.value = 0.15;
 
       for (let i = 0; i < NUM_TAPS; i++) {
         const delay = actx.createDelay(5.0);
@@ -437,7 +445,8 @@
 
       convolverInput.connect(convolver);
       convolver.connect(masterGain);
-      masterGain.connect(actx.destination);
+      masterGain.connect(limiter);
+      limiter.connect(actx.destination);
 
       return { echoInput, masterGain };
     }
