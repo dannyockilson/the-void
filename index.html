@@ -126,8 +126,8 @@
     // T4: Volume analysis & normalisation state
     const CALIBRATION_DURATION_MS = 1500;
     const EMA_ALPHA = 0.15; // smoothing factor (lower = smoother)
-    const SCREAM_ON_THRESHOLD = 0.6;  // normalised volume to trigger scream
-    const SCREAM_OFF_THRESHOLD = 0.35; // hysteresis: scream ends below this
+    const SCREAM_ON_THRESHOLD = 0.4;  // normalised volume to trigger scream
+    const SCREAM_OFF_THRESHOLD = 0.25; // hysteresis: scream ends below this
 
     let calibrationSamples = [];
     let calibrationEndTime = null;
@@ -213,8 +213,8 @@
           y: Math.random() * window.innerHeight,
           vx: (Math.random() - 0.5) * 0.25,
           vy: (Math.random() - 0.5) * 0.25,
-          radius: 0.8 + Math.random() * 1.2,
-          opacity: 0.03 + Math.random() * 0.06,
+          radius: 1.0 + Math.random() * 1.8,
+          opacity: 0.06 + Math.random() * 0.10,
           phase: Math.random() * Math.PI * 2,
         });
       }
@@ -338,7 +338,7 @@
         const pulse = REDUCED_MOTION ? 1 : (0.7 + 0.3 * Math.sin(t * 0.3 + p.phase));
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(60,20,90,${(p.opacity * pulse).toFixed(3)})`;
+        ctx.fillStyle = `rgba(90,30,130,${(p.opacity * pulse).toFixed(3)})`;
         ctx.fill();
       }
     }
@@ -353,6 +353,23 @@
       hum.connect(humGain);
       humGain.connect(actx.destination);
       hum.start();
+    }
+
+    // Draws a radial glow at centre — visible at any volume above ambient
+    function drawCenterGlow() {
+      const vol = audioMode === 'active' ? normalisedVolume : 0;
+      const intensity = Math.max(vol, silenceFactor * 0.15); // also pulses faintly in silence
+      if (intensity < 0.01) return;
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      const r = 30 + intensity * 120;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      grad.addColorStop(0, `rgba(100,30,210,${Math.min(0.7, intensity * 0.9).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
     }
 
     // T5: Ripple helpers
@@ -601,6 +618,9 @@
         sessionEnergy += normalisedVolume; // T12: accumulate scream energy
       }
       prevIsScreaming = isScreaming;
+
+      // Center glow: responds to any mic input, not just screams
+      drawCenterGlow();
 
       // T5: draw active ripple rings
       drawRipples(timestamp);
