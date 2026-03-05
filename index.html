@@ -71,6 +71,26 @@
     const WOBBLE_FREQ_BASE = 8;
     let prevIsScreaming = false;
 
+    // T8: Ambient idle state
+    const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const PARTICLE_COUNT = 55;
+    const particles = [];
+
+    function initParticles() {
+      for (let i = 0; i < PARTICLE_COUNT; i++) {
+        particles.push({
+          x: Math.random() * window.innerWidth,
+          y: Math.random() * window.innerHeight,
+          vx: (Math.random() - 0.5) * 0.25,
+          vy: (Math.random() - 0.5) * 0.25,
+          radius: 0.8 + Math.random() * 1.2,
+          opacity: 0.03 + Math.random() * 0.06,
+          phase: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+    initParticles();
+
     function getRMSVolume(analyserNode) {
       const data = new Float32Array(analyserNode.fftSize);
       analyserNode.getFloatTimeDomainData(data);
@@ -117,6 +137,36 @@
         isScreaming = false;
         console.log('[void] scream ended');
       }
+    }
+
+    // T8: Ambient helpers
+
+    function drawParticles(timestamp) {
+      const t = timestamp * 0.001;
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      for (const p of particles) {
+        if (!REDUCED_MOTION) {
+          p.x = (p.x + p.vx + w) % w;
+          p.y = (p.y + p.vy + h) % h;
+        }
+        const pulse = REDUCED_MOTION ? 1 : (0.7 + 0.3 * Math.sin(t * 0.3 + p.phase));
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(60,20,90,${(p.opacity * pulse).toFixed(3)})`;
+        ctx.fill();
+      }
+    }
+
+    function setupAmbientHum(audioCtx) {
+      const hum = audioCtx.createOscillator();
+      hum.type = 'sine';
+      hum.frequency.value = 48; // sub-bass, felt more than heard
+      const humGain = audioCtx.createGain();
+      humGain.gain.value = 0.018; // very quiet
+      hum.connect(humGain);
+      humGain.connect(audioCtx.destination);
+      hum.start();
     }
 
     // T5: Ripple helpers
@@ -243,6 +293,7 @@
         analyser.smoothingTimeConstant = 0.8;
         source.connect(analyser);
         echoMasterGain = setupEchoChain(audioCtx, source);
+        setupAmbientHum(audioCtx);
         audioMode = 'active';
         console.log('[void] audio pipeline active');
       } catch (err) {
@@ -266,9 +317,14 @@
     canvas.addEventListener('click', initAudio, { once: true });
 
     function render(timestamp) {
-      // Clear canvas with void background
-      ctx.fillStyle = '#010005';
+      // T8: background breathing — slow sine modulation on blue channel, never pure black
+      const breathe = REDUCED_MOTION ? 0 : (Math.sin(timestamp * 0.0003) * 0.5 + 0.5); // 0–1, ~20s period
+      const bgB = Math.round(5 + breathe * 5); // 5–10 range
+      ctx.fillStyle = `rgb(1,0,${bgB})`;
       ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+      // T8: ambient drifting particles
+      drawParticles(timestamp);
 
       // T4: volume analysis – updates smoothedRMS, normalisedVolume, isScreaming
       if (audioMode === 'active') {
