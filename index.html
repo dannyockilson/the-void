@@ -116,9 +116,22 @@
     // Memory-derived parameter shifts — imperceptible per-session, noticeable over time
     const _visitFactor  = Math.min(1, voidMemory.voidVisits / 100); // 0→1 over 100 visits
     const MAX_RINGS     = 12 + Math.round(Math.min(1, voidMemory.voidVisits / 50) * 2); // 12→14 over 50 visits
-    const HUM_FREQ_BASE = 48 - _visitFactor * 5;  // 48→43 Hz over 100 visits (lower, heavier)
     const ECHO_DECAY_MULT = 1 + _visitFactor * 0.08; // echo taps up to 8% longer
     const BG_BLUE_SHIFT = Math.round(_visitFactor * 4); // 0→4 extra on background blue channel
+
+    // T14: Temporal awareness — time-of-day and seasonal parameter shifts (pure local date math)
+    const _temporalNow = new Date();
+    const _hour  = _temporalNow.getHours();
+    const _month = _temporalNow.getMonth(); // 0=Jan … 11=Dec
+    const IS_NIGHT  = _hour >= 23 || _hour < 5;   // 11pm–5am
+    const IS_WINTER = _month >= 9  || _month <= 2; // Oct–Mar
+    const IS_SUMMER = !IS_WINTER && !IS_NIGHT;      // Apr–Sep, daytime only
+    const TEMPORAL_ECHO_MULT  = (IS_NIGHT ? 1.18 : 1.0) * (IS_WINTER ? 1.12 : 1.0);
+    const TEMPORAL_HUM_OFFSET = IS_NIGHT ? -3 : 0;  // Hz — lower, heavier at night
+    const TEMPORAL_COOL_SHIFT = IS_NIGHT ? 18 : 0;  // extra blue in ripple colour at night
+    const TEMPORAL_WARM_SHIFT = IS_SUMMER ? 12 : 0; // extra red in ripple colour in summer
+
+    const HUM_FREQ_BASE = 48 - _visitFactor * 5 + TEMPORAL_HUM_OFFSET; // 48→43 Hz, shifted by time of day
 
     console.log('[void] memory:', voidMemory.voidVisits, 'visits,',
       voidMemory.cumulativeEnergy.toFixed(1), 'lifetime energy');
@@ -143,6 +156,14 @@
     // MAX_RINGS defined by T12 memory system above
     const WOBBLE_FREQ_BASE = 8;
     let prevIsScreaming = false;
+
+    // T11: Volume milestone state
+    const MILESTONE_THRESHOLD = 0.82; // normalised volume — hard to reach, feels earned
+    const MILESTONE_FLASH_MS  = 160;  // white flash duration ms
+    let milestoneFlashUntil = 0;      // rAF timestamp; >0 means flash is active
+
+    // T13: Rare event state
+    let rareEventFiredThisSession = false; // max one rare event per session
 
     // T9: Haptic feedback
     const HAPTICS_SUPPORTED = 'vibrate' in navigator;
@@ -172,6 +193,70 @@
     function vibrateBreath() {
       if (!HAPTICS_SUPPORTED) return;
       navigator.vibrate([30]);
+    }
+
+    // T13: Rare event — distant panned echo from another space
+    function fireDistantEcho() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 55 + Math.random() * 30; // low, distant rumble
+      const panner = audioCtx.createStereoPanner();
+      panner.pan.value = Math.random() < 0.5 ? -0.85 : 0.85;
+      const convolver = audioCtx.createConvolver();
+      convolver.buffer = synthesiseIR(audioCtx);
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 2.5);
+      osc.connect(gain);
+      gain.connect(convolver);
+      convolver.connect(panner);
+      panner.connect(audioCtx.destination);
+      osc.start(now + 0.3 + Math.random() * 0.4); // delayed, as if from afar
+      osc.stop(now + 3.0);
+    }
+
+    // T13: Rare event — visual flicker state
+    let flickerUntil = 0;
+    let flickerX = 0, flickerY = 0, flickerSize = 0;
+
+    function triggerVisualFlicker() {
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 80 + Math.random() * 120;
+      flickerX = cx + Math.cos(angle) * dist;
+      flickerY = cy + Math.sin(angle) * dist;
+      flickerSize = 18 + Math.random() * 24;
+      flickerUntil = performance.now() + 90 + Math.random() * 30; // ~90–120ms
+    }
+
+    // T13: Rare event — haptic anomaly (mobile only)
+    function vibrateAnomaly() {
+      if (!HAPTICS_SUPPORTED) return;
+      navigator.vibrate([10, 25, 10, 60, 5, 15, 80]); // irregular, unexpected
+    }
+
+    function maybeFireRareEvent() {
+      if (rareEventFiredThisSession) return;
+      // Base 1.5% chance + up to +1% for returning users (over 50 visits)
+      const chance = 0.015 + Math.min(0.01, voidMemory.voidVisits / 5000);
+      if (Math.random() > chance) return;
+      rareEventFiredThisSession = true;
+      const pool = ['distant-echo', 'visual-flicker', 'void-breathes', 'haptic-anomaly'];
+      const event = pool[Math.floor(Math.random() * pool.length)];
+      console.log('[void] rare event:', event);
+      switch (event) {
+        case 'distant-echo':   fireDistantEcho(); break;
+        case 'visual-flicker': triggerVisualFlicker(); break;
+        case 'void-breathes':
+          spawnRipple(0.25 + Math.random() * 0.2, -1);
+          vibrateBreath();
+          break;
+        case 'haptic-anomaly': vibrateAnomaly(); break;
+      }
     }
 
     // T10: Silence detection & response
@@ -393,10 +478,10 @@
     }
 
     function getRippleColour(amplitude, opacity) {
-      // Dark purple (quiet) → bright blue-violet (loud)
-      const r = Math.round(10 + amplitude * 60);
+      // Dark purple (quiet) → bright blue-violet (loud); T14: warm/cool shift by time & season
+      const r = Math.round(Math.min(255, 10 + amplitude * 60 + TEMPORAL_WARM_SHIFT));
       const g = Math.round(amplitude * 10);
-      const b = Math.round(80 + amplitude * 175);
+      const b = Math.round(Math.min(255, 80 + amplitude * 175 + TEMPORAL_COOL_SHIFT));
       return `rgba(${r},${g},${b},${opacity.toFixed(3)})`;
     }
 
@@ -465,7 +550,7 @@
       const convolver = actx.createConvolver();
       convolver.buffer = synthesiseIR(actx);
       const masterGain = actx.createGain();
-      masterGain.gain.value = 0.38; // was 0.8 — reduced to prevent feedback
+      masterGain.gain.value = 0.38 * TEMPORAL_ECHO_MULT; // T14: deeper reverb at night/winter
 
       // Hard limiter: stops runaway gain on devices without headphones
       const limiter = actx.createDynamicsCompressor();
@@ -625,14 +710,61 @@
         spawnRipple(normalisedVolume);
         vibrateScream(normalisedVolume);
         sessionEnergy += normalisedVolume; // T12: accumulate scream energy
+
+        // T11: Volume milestone — fires when scream is exceptionally loud
+        if (normalisedVolume >= MILESTONE_THRESHOLD) {
+          spawnRipple(Math.min(1, normalisedVolume * 1.35)); // wider, deeper ring
+          milestoneFlashUntil = timestamp + MILESTONE_FLASH_MS;
+          if (echoMasterGain && audioCtx) {
+            const boosted = Math.min(0.72, echoMasterGain.gain.value * 1.6);
+            echoMasterGain.gain.setValueAtTime(boosted, audioCtx.currentTime);
+            echoMasterGain.gain.setTargetAtTime(
+              0.38 * TEMPORAL_ECHO_MULT, audioCtx.currentTime + 0.1, 1.2
+            );
+          }
+          vibrateMilestone();
+        }
+
+        // T13: rare event roll (mic mode only, max one per session)
+        maybeFireRareEvent();
       }
       prevIsScreaming = isScreaming;
 
       // Center glow: responds to any mic input, not just screams
       drawCenterGlow();
 
+      // T11: Milestone flash — brief white bloom from centre
+      if (milestoneFlashUntil > 0 && timestamp < milestoneFlashUntil) {
+        const flashProgress = 1 - (milestoneFlashUntil - timestamp) / MILESTONE_FLASH_MS;
+        const flashAlpha = (1 - flashProgress) * 0.55;
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const flashR = 150 + flashProgress * 60;
+        const flashGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, flashR);
+        flashGrad.addColorStop(0, `rgba(255,255,255,${flashAlpha.toFixed(3)})`);
+        flashGrad.addColorStop(0.5, `rgba(200,180,255,${(flashAlpha * 0.4).toFixed(3)})`);
+        flashGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.beginPath();
+        ctx.arc(cx, cy, flashR, 0, Math.PI * 2);
+        ctx.fillStyle = flashGrad;
+        ctx.fill();
+      } else {
+        milestoneFlashUntil = 0;
+      }
+
       // T5: draw active ripple rings
       drawRipples(timestamp);
+
+      // T13: Visual flicker — brief dark shape in the ripple field
+      if (flickerUntil > 0 && timestamp < flickerUntil) {
+        ctx.beginPath();
+        ctx.ellipse(flickerX, flickerY, flickerSize, flickerSize * 0.4,
+                    Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,0,0,${(0.5 + Math.random() * 0.3).toFixed(2)})`;
+        ctx.fill();
+      } else {
+        flickerUntil = 0;
+      }
 
       requestAnimationFrame(render);
     }
