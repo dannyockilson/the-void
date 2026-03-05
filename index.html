@@ -12,6 +12,7 @@
   <meta name="apple-mobile-web-app-title" content="The Void">
 
   <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
 
   <title>The Void</title>
 
@@ -770,6 +771,14 @@
     }
 
     requestAnimationFrame(render);
+
+    // T15: Service worker registration — enables offline support and PWA install
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/the-void/sw.js')
+          .catch(() => {}); // Silent fail — app works fine without SW
+      });
+    }
   </script>
 </body>
 </html>
