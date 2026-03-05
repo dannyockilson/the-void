@@ -35,20 +35,50 @@
       height: 100%;
       background-color: #010005;
     }
+
+    /* T6: first-visit overlay */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.4em;
+      pointer-events: none; /* let clicks fall through to canvas */
+    }
+
+    #overlay p {
+      color: #1a1a2e;
+      font-family: sans-serif;
+      font-size: clamp(0.8rem, 2.5vw, 1rem);
+      letter-spacing: 0.22em;
+      text-align: center;
+      opacity: 0;
+      margin: 0;
+    }
   </style>
 </head>
 <body>
   <canvas id="void"></canvas>
 
+  <div id="overlay">
+    <p id="line1"></p>
+    <p id="line2"></p>
+  </div>
+
   <script>
     const canvas = document.getElementById('void');
     const ctx = canvas.getContext('2d');
+    const line1 = document.getElementById('line1');
+    const line2 = document.getElementById('line2');
 
     let audioCtx = null;
     let analyser = null;
     let micStream = null;
     let audioMode = 'uninitialised'; // 'uninitialised' | 'active' | 'synth-fallback'
     let echoMasterGain = null;
+    let synthEchoInput = null; // T7: entry point for synth bursts into echo chain
 
     // T4: Volume analysis & normalisation state
     const CALIBRATION_DURATION_MS = 1500;
@@ -90,6 +120,55 @@
       }
     }
     initParticles();
+
+    // T6: First visit flow
+    const IS_RETURNING = Boolean(localStorage.getItem('void:visited'));
+
+    function setLineOpacity(el, opacity, durationMs) {
+      el.style.transition = REDUCED_MOTION ? 'none' : `opacity ${durationMs}ms ease`;
+      el.style.opacity = opacity;
+    }
+
+    function showOverlayIntro() {
+      line1.textContent = 'the void is listening';
+      line2.textContent = 'it needs your voice';
+      setLineOpacity(line1, 1, 2500);
+      setTimeout(() => setLineOpacity(line2, 1, 2500), 1000);
+    }
+
+    function hideOverlay(onDone) {
+      setLineOpacity(line1, 0, 1000);
+      setLineOpacity(line2, 0, 1000);
+      setTimeout(() => {
+        document.getElementById('overlay').style.display = 'none';
+        if (onDone) onDone();
+      }, 1000);
+    }
+
+    function showSynthOverlay() {
+      // Crossfade to synth message
+      setLineOpacity(line1, 0, 700);
+      setLineOpacity(line2, 0, 700);
+      setTimeout(() => {
+        line1.textContent = 'the void can still feel you';
+        line2.textContent = 'tap to reach it';
+        setLineOpacity(line1, 1, 2000);
+        setTimeout(() => setLineOpacity(line2, 1, 2000), 800);
+      }, 700);
+    }
+
+    function onPermissionGranted() {
+      try { localStorage.setItem('void:visited', '1'); } catch (_) {}
+      if (!IS_RETURNING) hideOverlay();
+    }
+
+    function onPermissionDenied() {
+      showSynthOverlay();
+      addSynthTapHandler();
+    }
+
+    // Show intro text for first-time visitors
+    if (!IS_RETURNING) showOverlayIntro();
 
     function getRMSVolume(analyserNode) {
       const data = new Float32Array(analyserNode.fftSize);
@@ -158,14 +237,14 @@
       }
     }
 
-    function setupAmbientHum(audioCtx) {
-      const hum = audioCtx.createOscillator();
+    function setupAmbientHum(actx) {
+      const hum = actx.createOscillator();
       hum.type = 'sine';
       hum.frequency.value = 48; // sub-bass, felt more than heard
-      const humGain = audioCtx.createGain();
+      const humGain = actx.createGain();
       humGain.gain.value = 0.018; // very quiet
       hum.connect(humGain);
-      humGain.connect(audioCtx.destination);
+      humGain.connect(actx.destination);
       hum.start();
     }
 
@@ -228,11 +307,11 @@
       }
     }
 
-    function synthesiseIR(audioCtx) {
+    function synthesiseIR(actx) {
       const duration = 3.5;
-      const sampleRate = audioCtx.sampleRate;
+      const sampleRate = actx.sampleRate;
       const length = Math.floor(sampleRate * duration);
-      const buffer = audioCtx.createBuffer(2, length, sampleRate);
+      const buffer = actx.createBuffer(2, length, sampleRate);
       for (let c = 0; c < 2; c++) {
         const data = buffer.getChannelData(c);
         for (let i = 0; i < length; i++) {
@@ -245,33 +324,66 @@
       return buffer;
     }
 
-    function setupEchoChain(audioCtx, source) {
+    // Returns { echoInput, masterGain }. Connect your source to echoInput.
+    function buildEchoChain(actx) {
       const NUM_TAPS = 4;
       const TAP_INTERVAL = 0.3;
 
-      const convolverInput = audioCtx.createGain();
-      const convolver = audioCtx.createConvolver();
-      convolver.buffer = synthesiseIR(audioCtx);
-      const masterGain = audioCtx.createGain();
+      const echoInput = actx.createGain();
+      const convolverInput = actx.createGain();
+      const convolver = actx.createConvolver();
+      convolver.buffer = synthesiseIR(actx);
+      const masterGain = actx.createGain();
       masterGain.gain.value = 0.8;
 
       for (let i = 0; i < NUM_TAPS; i++) {
-        const delay = audioCtx.createDelay(5.0);
+        const delay = actx.createDelay(5.0);
         delay.delayTime.value = TAP_INTERVAL * (i + 1);
-
-        const tapGain = audioCtx.createGain();
+        const tapGain = actx.createGain();
         tapGain.gain.value = Math.pow(0.5, i + 1);
-
-        source.connect(delay);
+        echoInput.connect(delay);
         delay.connect(tapGain);
         tapGain.connect(convolverInput);
       }
 
       convolverInput.connect(convolver);
       convolver.connect(masterGain);
-      masterGain.connect(audioCtx.destination);
+      masterGain.connect(actx.destination);
 
-      return masterGain;
+      return { echoInput, masterGain };
+    }
+
+    // T7: Synthesised fallback
+
+    function fireSynthBurst(amplitude) {
+      if (!audioCtx || !synthEchoInput) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 80 + amplitude * 40; // 80–120 Hz dark rumble
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(amplitude * 0.7, now + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4 + amplitude * 1.2);
+      osc.connect(gain);
+      gain.connect(synthEchoInput);
+      osc.start(now);
+      osc.stop(now + 0.4 + amplitude * 1.2 + 0.1);
+      // Drive ripples directly (no analyser in synth mode)
+      spawnRipple(amplitude);
+    }
+
+    function addSynthTapHandler() {
+      let tapStart = null;
+      canvas.addEventListener('pointerdown', () => { tapStart = performance.now(); });
+      canvas.addEventListener('pointerup', () => {
+        if (tapStart === null || audioMode !== 'synth-fallback') return;
+        const duration = performance.now() - tapStart;
+        tapStart = null;
+        // Map 50ms–1500ms → amplitude 0.2–1.0
+        const amplitude = Math.min(1, Math.max(0.2, (duration - 50) / 1450));
+        fireSynthBurst(amplitude);
+      });
     }
 
     async function initAudio() {
@@ -292,13 +404,26 @@
         analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0.8;
         source.connect(analyser);
-        echoMasterGain = setupEchoChain(audioCtx, source);
+        const { echoInput, masterGain } = buildEchoChain(audioCtx);
+        source.connect(echoInput);
+        echoMasterGain = masterGain;
         setupAmbientHum(audioCtx);
         audioMode = 'active';
         console.log('[void] audio pipeline active');
+        onPermissionGranted();
       } catch (err) {
         console.warn('[void] mic unavailable, switching to synth fallback:', err.name);
+        if (!audioCtx) {
+          audioCtx = new AudioContext();
+          await audioCtx.resume();
+        }
+        const { echoInput, masterGain } = buildEchoChain(audioCtx);
+        synthEchoInput = echoInput;
+        echoMasterGain = masterGain;
+        setupAmbientHum(audioCtx);
         audioMode = 'synth-fallback';
+        console.log('[void] synth fallback pipeline active');
+        onPermissionDenied();
       }
     }
 
@@ -329,13 +454,11 @@
       // T4: volume analysis – updates smoothedRMS, normalisedVolume, isScreaming
       if (audioMode === 'active') {
         updateVolumeAnalysis();
-        if (ambientBaseline !== null) {
-          console.log('[void] normalised:', normalisedVolume.toFixed(3), 'screaming:', isScreaming);
-        }
       }
 
-      // T5: spawn ripple on scream onset (rising edge)
-      if (isScreaming && !prevIsScreaming) {
+      // T5: spawn ripple on scream onset (rising edge) — mic mode only
+      // (synth mode spawns ripples directly in fireSynthBurst)
+      if (audioMode === 'active' && isScreaming && !prevIsScreaming) {
         spawnRipple(normalisedVolume);
       }
       prevIsScreaming = isScreaming;
