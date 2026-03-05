@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#010005">
+  <meta name="description" content="Scream into the void.">
+
+  <!-- PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="The Void">
+
+  <link rel="manifest" href="manifest.json">
+
+  <title>The Void</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #010005;
+    }
+
+    #void {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background-color: #010005;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="void"></canvas>
+
+  <script>
+    const canvas = document.getElementById('void');
+    const ctx = canvas.getContext('2d');
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      ctx.scale(dpr, dpr);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    function render() {
+      // Clear canvas with void background
+      ctx.fillStyle = '#010005';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // T2: AudioContext initialization will go here (inside user gesture handler)
+      // T5: Ripple rendering will go here
+
+      requestAnimationFrame(render);
+    }
+
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Future build artifacts
+dist/
+build/
+
+# Preserve planning docs
+!.planning/

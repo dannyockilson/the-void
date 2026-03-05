@@ -1,0 +1,11 @@
+{
+  "name": "The Void",
+  "short_name": "Void",
+  "description": "Scream into the void.",
+  "start_url": "/the-void/",
+  "display": "standalone",
+  "background_color": "#010005",
+  "theme_color": "#010005",
+  "orientation": "any",
+  "icons": []
+}
