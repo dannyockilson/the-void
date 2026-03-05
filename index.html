@@ -44,6 +44,45 @@
     const canvas = document.getElementById('void');
     const ctx = canvas.getContext('2d');
 
+    let audioCtx = null;
+    let analyser = null;
+    let micStream = null;
+    let audioMode = 'uninitialised'; // 'uninitialised' | 'active' | 'synth-fallback'
+
+    function getRMSVolume(analyserNode) {
+      const data = new Float32Array(analyserNode.fftSize);
+      analyserNode.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      return Math.sqrt(sum / data.length);
+    }
+
+    async function initAudio() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new AudioContext();
+        await audioCtx.resume(); // required for Safari and Chrome
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          }
+        });
+        micStream = stream;
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+        source.connect(analyser);
+        audioMode = 'active';
+        console.log('[void] audio pipeline active');
+      } catch (err) {
+        console.warn('[void] mic unavailable, switching to synth fallback:', err.name);
+        audioMode = 'synth-fallback';
+      }
+    }
+
     function resize() {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = window.innerWidth * dpr;
@@ -56,12 +95,17 @@
     window.addEventListener('resize', resize);
     resize();
 
+    canvas.addEventListener('click', initAudio, { once: true });
+
     function render() {
       // Clear canvas with void background
       ctx.fillStyle = '#010005';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // T2: AudioContext initialization will go here (inside user gesture handler)
+      // T2: log real-time audio levels when pipeline is active
+      if (audioMode === 'active' && analyser) {
+        console.log('[void] rms:', getRMSVolume(analyser).toFixed(4));
+      }
       // T5: Ripple rendering will go here
 
       requestAnimationFrame(render);
