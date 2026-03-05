@@ -101,6 +101,36 @@
     const WOBBLE_FREQ_BASE = 8;
     let prevIsScreaming = false;
 
+    // T9: Haptic feedback
+    const HAPTICS_SUPPORTED = 'vibrate' in navigator;
+
+    // Scream haptic: echo-decay pattern mirrors the 4-tap delay chain
+    function vibrateScream(amplitude) {
+      if (!HAPTICS_SUPPORTED) return;
+      const base = Math.round(50 + amplitude * 250); // 50–300ms base tap
+      navigator.vibrate([
+        base,
+        180,
+        Math.round(base * 0.5),
+        180,
+        Math.round(base * 0.25),
+        180,
+        Math.round(base * 0.12),
+      ]);
+    }
+
+    // Milestone haptic: distinct triple-pulse for when the void cracks open (T11)
+    function vibrateMilestone() {
+      if (!HAPTICS_SUPPORTED) return;
+      navigator.vibrate([200, 60, 120, 60, 200]);
+    }
+
+    // Void breath haptic: single subtle pulse, for T10 silence response
+    function vibrateBreath() {
+      if (!HAPTICS_SUPPORTED) return;
+      navigator.vibrate([30]);
+    }
+
     // T8: Ambient idle state
     const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const PARTICLE_COUNT = 55;
@@ -369,8 +399,9 @@
       gain.connect(synthEchoInput);
       osc.start(now);
       osc.stop(now + 0.4 + amplitude * 1.2 + 0.1);
-      // Drive ripples directly (no analyser in synth mode)
+      // Drive ripples and haptics directly (no analyser in synth mode)
       spawnRipple(amplitude);
+      vibrateScream(amplitude);
     }
 
     function addSynthTapHandler() {
@@ -456,10 +487,11 @@
         updateVolumeAnalysis();
       }
 
-      // T5: spawn ripple on scream onset (rising edge) — mic mode only
-      // (synth mode spawns ripples directly in fireSynthBurst)
+      // T5 + T9: spawn ripple and haptic on scream onset (rising edge) — mic mode only
+      // (synth mode handles these directly in fireSynthBurst)
       if (audioMode === 'active' && isScreaming && !prevIsScreaming) {
         spawnRipple(normalisedVolume);
+        vibrateScream(normalisedVolume);
       }
       prevIsScreaming = isScreaming;
 
