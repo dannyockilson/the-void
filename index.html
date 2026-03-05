@@ -81,6 +81,48 @@
     let synthEchoInput = null; // T7: entry point for synth bursts into echo chain
     let humOscillator = null;  // T10: stored so silence detection can ramp pitch
 
+    // T12: Void Memory System
+    const MEMORY_KEY = 'void:memory';
+
+    function loadMemory() {
+      try {
+        const raw = localStorage.getItem(MEMORY_KEY);
+        if (raw) {
+          const m = JSON.parse(raw);
+          return {
+            voidVisits:       Number(m.voidVisits)       || 0,
+            cumulativeEnergy: Number(m.cumulativeEnergy) || 0,
+            lastVisit:        m.lastVisit                || null,
+            firstVisit:       m.firstVisit               || null,
+          };
+        }
+      } catch (_) {}
+      return { voidVisits: 0, cumulativeEnergy: 0, lastVisit: null, firstVisit: null };
+    }
+
+    function saveMemory() {
+      try { localStorage.setItem(MEMORY_KEY, JSON.stringify(voidMemory)); } catch (_) {}
+    }
+
+    const voidMemory = loadMemory();
+    voidMemory.voidVisits++;
+    const _nowISO = new Date().toISOString();
+    if (!voidMemory.firstVisit) voidMemory.firstVisit = _nowISO;
+    voidMemory.lastVisit = _nowISO;
+    saveMemory(); // persist incremented visit count immediately
+
+    let sessionEnergy = 0; // scream energy accumulated this session
+
+    // Memory-derived parameter shifts — imperceptible per-session, noticeable over time
+    const _visitFactor  = Math.min(1, voidMemory.voidVisits / 100); // 0→1 over 100 visits
+    const MAX_RINGS     = 12 + Math.round(Math.min(1, voidMemory.voidVisits / 50) * 2); // 12→14 over 50 visits
+    const HUM_FREQ_BASE = 48 - _visitFactor * 5;  // 48→43 Hz over 100 visits (lower, heavier)
+    const ECHO_DECAY_MULT = 1 + _visitFactor * 0.08; // echo taps up to 8% longer
+    const BG_BLUE_SHIFT = Math.round(_visitFactor * 4); // 0→4 extra on background blue channel
+
+    console.log('[void] memory:', voidMemory.voidVisits, 'visits,',
+      voidMemory.cumulativeEnergy.toFixed(1), 'lifetime energy');
+
     // T4: Volume analysis & normalisation state
     const CALIBRATION_DURATION_MS = 1500;
     const EMA_ALPHA = 0.15; // smoothing factor (lower = smoother)
@@ -98,7 +140,7 @@
     const ripples = [];
     const RING_LIFETIME_MS = 2500;
     const RING_EXPAND_SPEED = 180; // logical px per second
-    const MAX_RINGS = 12;
+    // MAX_RINGS defined by T12 memory system above
     const WOBBLE_FREQ_BASE = 8;
     let prevIsScreaming = false;
 
@@ -137,8 +179,8 @@
     const SILENCE_PEAK_MS  = 60000;   // reaches full effect at 60s
     const SILENCE_RESET_THRESHOLD = 0.05; // normalised volume above this = not silent
     const SILENCE_BREATH_INTERVAL_MS = 14000; // inward ripple every 14s of deep silence
-    const HUM_FREQ_BASE  = 48;  // Hz at idle
-    const HUM_FREQ_TENSE = 72;  // Hz at peak silence
+    // HUM_FREQ_BASE defined by T12 memory system above (starts at 48Hz, drifts to 43Hz)
+    const HUM_FREQ_TENSE = 72;  // Hz at peak silence (T10)
 
     let lastSoundTime   = performance.now(); // resets whenever sound detected
     let silenceFactor   = 0;  // 0 = active, 1 = deep silence
@@ -410,7 +452,7 @@
 
       for (let i = 0; i < NUM_TAPS; i++) {
         const delay = actx.createDelay(5.0);
-        delay.delayTime.value = TAP_INTERVAL * (i + 1);
+        delay.delayTime.value = TAP_INTERVAL * (i + 1) * ECHO_DECAY_MULT; // T12: longer with visits
         const tapGain = actx.createGain();
         tapGain.gain.value = Math.pow(0.5, i + 1);
         echoInput.connect(delay);
@@ -445,6 +487,7 @@
       spawnRipple(amplitude);
       vibrateScream(amplitude);
       lastSoundTime = performance.now(); // T10: synth taps also break silence
+      sessionEnergy += amplitude;        // T12: accumulate synth tap energy
     }
 
     function addSynthTapHandler() {
@@ -513,12 +556,21 @@
     window.addEventListener('resize', resize);
     resize();
 
+    // T12: flush session energy to persistent memory when the user leaves
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && sessionEnergy > 0) {
+        voidMemory.cumulativeEnergy += sessionEnergy;
+        sessionEnergy = 0;
+        saveMemory();
+      }
+    });
+
     canvas.addEventListener('click', initAudio, { once: true });
 
     function render(timestamp) {
       // T8: background breathing — slow sine modulation on blue channel, never pure black
       const breathe = REDUCED_MOTION ? 0 : (Math.sin(timestamp * 0.0003) * 0.5 + 0.5); // 0–1, ~20s period
-      const bgB = Math.round(5 + breathe * 5); // 5–10 range
+      const bgB = Math.round(5 + breathe * 5 + BG_BLUE_SHIFT); // T12: drifts toward navy
       ctx.fillStyle = `rgb(1,0,${bgB})`;
       ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
@@ -546,6 +598,7 @@
       if (audioMode === 'active' && isScreaming && !prevIsScreaming) {
         spawnRipple(normalisedVolume);
         vibrateScream(normalisedVolume);
+        sessionEnergy += normalisedVolume; // T12: accumulate scream energy
       }
       prevIsScreaming = isScreaming;
 
